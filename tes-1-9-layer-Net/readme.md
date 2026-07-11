@@ -30,23 +30,6 @@ Dataset standar MNIST dari `torchvision.datasets.MNIST()` digunakan untuk **mela
 
 ## 🧠 Arsitektur Model
 
-### SimpleCNN (Cell 3) — 9 Layer
-Model CNN dengan **9 layer** yang dirancang untuk klasifikasi MNIST:
-
-| No | Layer                | Detail                          |
-|----|----------------------|---------------------------------|
-| 1  | Conv2d               | 1 → 32 channel, kernel 3×3     |
-| 2  | BatchNorm2d + ReLU   | Normalisasi + aktivasi          |
-| 3  | MaxPool2d            | 2×2, pooling                    |
-| 4  | Conv2d               | 32 → 64 channel, kernel 3×3    |
-| 5  | BatchNorm2d + ReLU   | Normalisasi + aktivasi          |
-| 6  | MaxPool2d            | 2×2, pooling                    |
-| 7  | Dropout              | 25%                             |
-| 8  | Linear (fc1) + ReLU  | 64×7×7 → 128 neuron             |
-| 9  | Dropout + Linear (fc2) | 128 → 10 neuron (output)     |
-
-Total parameter: ~**387.000**.
-
 ### Net (Cell 4) — MLP 3 Layer
 Digunakan sebagai model utama untuk eksperimen quantisasi:
 
