@@ -23,23 +23,36 @@ MNIST/
 
 Kelas `HandwrittenDigitDataset` membaca gambar dari folder, meresize ke **28×28 pixels (grayscale)**, dan menerapkan normalisasi ke rentang **[-1, 1]**.
 
-### 2. MNIST via Torchvision (Cell 4)
+### 2. MNIST via Torchvision (Cell 3/4)
 Dataset standar MNIST dari `torchvision.datasets.MNIST()` digunakan untuk **melatih model** sebelum dievaluasi dengan quantisasi. Normalisasi menggunakan mean=0.1307 dan std=0.3081.
+
+> **Catatan Cell:** Notebook 1 menggunakan Cell 3 untuk loading dataset + training, sedangkan Notebook 2 menggunakan Cell 3 terpisah (tanpa training dari awal, langsung load model).
 
 ---
 
 ## 🧠 Arsitektur Model
 
-### Net (Cell 4) — MLP 3 Layer
-Digunakan sebagai model utama untuk eksperimen quantisasi:
+### Net (Cell 4/3) — MLP 3 Layer
+Digunakan sebagai model utama untuk eksperimen quantisasi. Terdapat **dua varian arsitektur** yang masing-masing diimplementasikan di notebook berbeda:
 
-| Layer | Shape             | Aktivasi |
-|-------|-------------------|----------|
-| fc1   | 784 → 128         | ReLU     |
-| fc2   | 128 → 64          | ReLU     |
-| fc3   | 64 → 10           | —        |
+| Notebook | Layer | Shape             | Aktivasi |
+|----------|-------|-------------------|----------|
+| **#1** `Quantization_Model_1.ipynb` | fc1   | 784 → **128**     | ReLU     |
+|          | fc2   | **128** → **64**  | ReLU     |
+|          | fc3   | **64** → 10       | —        |
+| **#2** `Quantization_Model_2.ipynb` | fc1   | 784 → **512**     | ReLU     |
+|          | fc2   | **512** → **256** | ReLU     |
+|          | fc3   | **256** → 10      | —        |
 
-Model di-*train* selama **5 epoch** menggunakan **Adam optimizer** (lr=0.001) dengan **CrossEntropyLoss**, disimpan ke Google Drive sebagai `final_model.pth`.
+**Perbedaan utama** terletak pada dimensi *hidden layer*:
+- **Notebook 1** menggunakan arsitektur standar (128 → 64) yang lebih *compact*, menghasilkan model dengan parameter lebih sedikit. Model disimpan sebagai `final_model.pth`.
+- **Notebook 2** menggunakan arsitektur yang lebih **lebar** (512 → 256) — setiap *hidden layer* memiliki **4× lebih banyak neuron**. Model disimpan sebagai `final_model_arsitektur_baru.pth`.
+
+Dampak perbedaan dimensi ini terhadap kuantisasi:
+- Arsitektur yang lebih lebar (Notebook 2) memiliki lebih banyak parameter per layer, sehingga jumlah **group** pada FGQ akan lebih banyak meskipun ukuran group (N) sama.
+- Dengan total parameter yang lebih banyak, distribusi bobot cenderung lebih beragam yang berpotensi memengaruhi efektivitas threshold pada Standard Ternary Quantization.
+
+Kedua model di-*train* selama **5 epoch** menggunakan **Adam optimizer** (lr=0.001) dengan **CrossEntropyLoss**.
 
 ---
 
