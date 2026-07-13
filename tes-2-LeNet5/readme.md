@@ -36,9 +36,9 @@ Diadaptasi dari arsitektur klasik LeNet-5 (LeCun et al., 1998) dengan input **32
 | Layer  | Type         | Kernel / Size | Output Shape     | Aktivasi |
 |--------|-------------|---------------|------------------|----------|
 | conv1  | Conv2D      | 5×5 (6 ch)    | 6×28×28          | ReLU     |
-| pool1  | MaxPool2D   | 2×2           | 6×14×14          | —        |
+| pool1  | AveragePool2D   | 2×2           | 6×14×14          | —        |
 | conv2  | Conv2D      | 5×5 (16 ch)   | 16×10×10         | ReLU     |
-| pool2  | MaxPool2D   | 2×2           | 16×5×5           | —        |
+| pool2  | AveragePool2D   | 2×2           | 16×5×5           | —        |
 | fc1    | Linear      | 400 → 120     | 120              | ReLU     |
 | fc2    | Linear      | 120 → 84      | 84               | ReLU     |
 | fc3    | Linear      | 84 → 10       | 10               | —        |
