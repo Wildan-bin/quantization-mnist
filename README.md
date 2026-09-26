@@ -18,8 +18,8 @@ Repositori ini berisi eksperimen **kuantisasi ternary** (bobot hanya bernilai $\
 |---|---|
 | **Skema penelitian** | **Modular Pipeline** (refaktorisasi dari skema monolitik) |
 | **Task** | Klasifikasi citra 10 kelas |
-| **Dataset** | MNIST, Fashion-MNIST, CIFAR-10 |
-| **Arsitektur** | MLP (Net), LeNet-5, ResNet-18 (+ ResNet-18 Modified) |
+| **Dataset** | MNIST, Fashion-MNIST, CIFAR-10 (tidak digunakan lagi) |
+| **Arsitektur** | MLP (tidak digunakan lagi), LeNet-5, ResNet-18 (+ ResNet-18 Modified) |
 | **Kuantisasi** | Standard Ternary & Fine-Grained Ternary Quantization (FGQ) — varian symmetric & asymmetric |
 | **Output model** | `.pth` (checkpoint FP32), `.safetensors` (model ternary ter-*pack* 2-bit), `.pt` (TorchScript) |
 | **Lingkungan** | Google Colab (Google Drive ter-mount) + LibTorch 2.4.0 (inferensi C++) |
