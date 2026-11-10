@@ -45,7 +45,7 @@ Struktur section sama dengan `Quantization_Fashion_MNIST.ipynb`, dengan satu sec
 
 | # | Section | Isi |
 |---|---|---|
-| 3a | **LEARNING RATE RANGE TEST** | Dataloader khusus LRRT (normalisasi `0.5 / 0.5`), `run_lr_range_test()` + `plot_lr_range_test()` untuk **LeNet-5** dan **ResNet-18 Modified**, menghasilkan kandidat `best_lr` & `steepest_lr` |
+| 3a | **LEARNING RATE RANGE TEST** | Dataloader khusus LRRT (normalisasi `0.5 / 0.5`), `run_lr_range_test()` + `plot_lr_range_test()` untuk **LeNet-5** dan **ResNet-18 Modified**, menghasilkan kandidat LR: LeNet-5 `{0.001, 0.005, 0.01}`, ResNet-18 `{0.0001, 0.0005, 0.001, 0.005, 0.01}` |
 | 3b | **MODEL SETUP** | Training model memakai LR kandidat hasil LRRT (ResNet-18 / Modified / LeNet-5), dilanjutkan kuantisasi & penyimpanan seperti notebook lain |
 
 ---
@@ -96,6 +96,29 @@ model_fp32, history = load_and_prepare_model(LeNet5, model_path, train_loader,
 ```
 
 Di notebook v2, LRRT dijalankan dua kali: untuk **LeNet-5** dan **ResNet-18 Modified**.
+
+#### Hasil LRRT — Kandidat Learning Rate
+
+Kurva LRRT untuk kedua arsitektur menghasilkan kandidat LR berikut, yang kemudian dipakai sebagai `lr` pada `load_and_prepare_model()`:
+
+| Arsitektur | Kandidat learning rate |
+|---|---|
+| **LeNet-5** | `0.001`, `0.005`, `0.01` |
+| **ResNet-18** | `0.0001`, `0.0005`, `0.001`, `0.005`, `0.01` |
+
+Dari daftar tersebut, beberapa nilai dicoba sebagai variasi training (mis. `lr=0.001` vs `0.005` vs `0.01`) untuk melihat pengaruhnya terhadap akurasi baseline FP32 sebelum model dikuantisasi. Nilai `best_lr`/`steepest_lr` dari plot LRRT dipakai sebagai acuan awal pemilihan kandidat tersebut — bukan dipakai mentah-mentah, karena kandidat dibulatkan ke nilai "bulat" yang umum dipakai.
+
+```python
+# LeNet-5 — kandidat dari LRRT
+for lr in [0.001, 0.005, 0.01]:
+    model_fp32, history = load_and_prepare_model(LeNet5, model_path, train_loader,
+                                                 test_loader, device, num_epochs=10, lr=lr)
+
+# ResNet-18 — kandidat dari LRRT
+for lr in [0.0001, 0.0005, 0.001, 0.005, 0.01]:
+    model_fp32, history = load_and_prepare_model(ResNet18, model_path, train_loader,
+                                                 test_loader, device, num_epochs=10, lr=lr)
+```
 
 ### B. Kuantisasi
 
@@ -250,11 +273,14 @@ model_path, train_loader, test_loader = setup_mnist_environment('lenet5_mnist_ba
 lrrt_results = run_lr_range_test(LeNet5, train_loader_lrrt, device,
                                  start_lr=1e-6, end_lr=1.0, num_iter=300)
 best_lr, steepest_lr = plot_lr_range_test(lrrt_results)
+# Kandidat LR hasil LRRT:
+#   LeNet-5   : 0.001, 0.005, 0.01
+#   ResNet-18 : 0.0001, 0.0005, 0.001, 0.005, 0.01
 
-# 2. Load / Train model baseline (dengan best-model tracking, lr dari LRRT)
+# 2. Load / Train model baseline (dengan best-model tracking, lr kandidat LRRT)
 model_fp32, history = load_and_prepare_model(LeNet5, model_path,
                                               train_loader, test_loader, device,
-                                              num_epochs=5, lr=best_lr)
+                                              num_epochs=5, lr=0.005)
 best_info = get_best_accuracy(history)
 
 # 3. Standard Ternary Quantization (+ simpan)
