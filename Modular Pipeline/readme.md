@@ -6,15 +6,20 @@ Folder ini berisi **tiga notebook modular** yang menerapkan pendekatan modular u
 
 | Notebook | Dataset | Arsitektur | Section tambahan |
 |---|---|---|---|
-| `Quantization_MNIST.ipynb` | **MNIST** | LeNet-5 & ResNet-18 | — |
+| `Quantization_MNIST.ipynb` | **MNIST** | LeNet-5, ResNet-18 & ResNet-18 Modified | **Learning Rate Range Test (LRRT)** sebelum training |
 | `Quantization_Fashion_MNIST.ipynb` | **Fashion-MNIST** | LeNet-5, ResNet-18 & ResNet-18 Modified | Sel debug pack/unpack, ekspor TorchScript (`.pt`), inferensi C++ (LibTorch) |
 | `Quantization_Fashion_MNIST_v2.ipynb` | **Fashion-MNIST** | LeNet-5, ResNet-18 & ResNet-18 Modified | **Learning Rate Range Test (LRRT)** sebelum training, lalu seluruh alur Fashion-MNIST |
 
-Kedua notebook berbagi **blok fungsi modular yang identik** (setup dataset, training, kuantisasi, penyimpanan). Perbedaannya terletak pada fungsi setup dataset, kelas model, serta section tambahan di notebook Fashion-MNIST.
+Ketiga notebook berbagi **blok fungsi modular yang identik** (setup dataset, training, kuantisasi, penyimpanan). Perbedaannya terletak pada fungsi setup dataset, kelas model, serta section tambahan di masing-masing notebook.
 
-Sebelum training model, saya menjalankan **Learning Rate Range Test (LRRT)** untuk mendapatkan **kandidat learning rate** yang cocok — alih-alih menebak nilai `lr` secara arbitrer. LRRT dijalankan di `Quantization_Fashion_MNIST_v2.ipynb` (section *PENGUJIAN TRAINING & KUANTISASI → Learning Rate Range Test*) untuk LeNet-5 dan ResNet-18 Modified, dan nilai LR hasilnya dipakai sebagai `lr` pada `load_and_prepare_model()`.
+Sebelum training model, saya menjalankan **Learning Rate Range Test (LRRT)** untuk mendapatkan **kandidat learning rate** yang cocok — alih-alih menebak nilai `lr` secara arbitrer. LRRT kini ada di **dua notebook**:
 
-Pipeline ini merupakan hasil refaktorisasi dari skema monolitik sebelumnya — setiap tanggung jawab dipisahkan ke dalam fungsi independen yang dapat digunakan ulang, dan kedua notebook mengikuti **alur tahapan yang konsisten**.
+- `Quantization_MNIST.ipynb` → section *PENGUJIAN TRAINING & KUANTISASI → Learning Rate Range Test*, dijalankan untuk **LeNet-5** dan **ResNet-18**.
+- `Quantization_Fashion_MNIST_v2.ipynb` → section yang sama, dijalankan untuk **LeNet-5** dan **ResNet-18 Modified**.
+
+Nilai LR hasil LRRT dipakai sebagai `lr` pada `load_and_prepare_model()` saat training model baseline.
+
+Pipeline ini merupakan hasil refaktorisasi dari skema monolitik sebelumnya — setiap tanggung jawab dipisahkan ke dalam fungsi independen yang dapat digunakan ulang, dan semua notebook mengikuti **alur tahapan yang konsisten**.
 
 ---
 
@@ -25,8 +30,10 @@ Pipeline ini merupakan hasil refaktorisasi dari skema monolitik sebelumnya — s
 | # | Section | Isi |
 |---|---|---|
 | 1 | **LOAD & EDA MNIST** | Load & stratified split (50k train / 10k val / 10k test), EDA (sparsity, distribusi label, statistik dasar, visualisasi gambar, brightness & mean intensitas pixel) |
-| 2 | **DEFINISI FUNGSI MODULAR** | Setup environment, trainer/evaluator, fungsi kuantisasi, definisi model, fungsi penyimpanan (safetensors), generate input batch |
-| 3 | **PENGUJIAN TRAINING & KUANTISASI** | Model setup (ResNet-18 & LeNet-5), Standard Ternary (symmetric + asymmetric) per arsitektur, FGQ, perbandingan akurasi, penyimpanan & verifikasi safetensors |
+| 2 | **DEFINISI FUNGSI MODULAR** | Setup environment (mengembalikan `train_loader`, `val_loader`, `test_loader`), trainer/evaluator dengan **early stopping** berbasis validation set, fungsi kuantisasi, definisi model (termasuk **`ResNet18Modified`**), fungsi penyimpanan (safetensors), generate input batch |
+| 3a | **LEARNING RATE RANGE TEST** | Dataloader khusus LRRT (normalisasi `0.5 / 0.5`, batch size 128), `run_lr_range_test()` + `plot_lr_range_test()` untuk **LeNet-5** dan **ResNet-18**, menghasilkan kandidat `best_lr` & `steepest_lr` |
+| 3b | **MODEL SETUP** | Training baseline memakai LR kandidat hasil LRRT — ResNet-18 (`lr=0.0001`), ResNet-18 Modified (5 variasi: `0.0001`–`0.01`), LeNet-5 (2 variasi: `0.001` & `0.005`) — dengan `patience=5` |
+| 3c | **KUANTISASI MODEL** | Standard Ternary (symmetric + asymmetric) per arsitektur, FGQ + kuantisasi banyak versi, perbandingan akurasi, penyimpanan & verifikasi safetensors |
 | 4 | **INFERENSI** | Upload gambar, preprocessing, prediksi + benchmark FP32 vs kuantisasi (ResNet-18 & LeNet-5) |
 
 ### `Quantization_Fashion_MNIST.ipynb`
@@ -56,15 +63,20 @@ Struktur section sama dengan `Quantization_Fashion_MNIST.ipynb`, dengan satu sec
 
 | Fungsi | Signature | Tanggung Jawab |
 |---|---|---|
-| `setup_mnist_environment()` | `(model_name, force_remount=True)` | Mount Google Drive, siapkan path model, buat `train_loader` & `test_loader` **MNIST** |
-| `setup_fashion_mnist_environment()` | `(model_name, force_remount=True)` | Idem untuk **Fashion-MNIST** |
+| `setup_mnist_environment()` | `(model_name, force_remount=True)` | Mount Google Drive, siapkan path model, buat `train_loader`, `val_loader`, & `test_loader` **MNIST** (return 4 nilai) |
+| `setup_fashion_mnist_environment()` | `(model_name, force_remount=True)` | Idem untuk **Fashion-MNIST**, tetapi hanya mengembalikan `train_loader` & `test_loader` |
 | `evaluate_accuracy()` | `(model, data_loader, device)` | Evaluasi akurasi top-1 pada data loader |
-| `load_and_prepare_model()` | `(model_class, model_path, train_loader, test_loader, device, num_epochs=10, lr=0.001)` | Load model dari checkpoint (jika ada) **atau** training dari awal dengan **best-model tracking**, lalu simpan `state_dict` + `history` |
-| `get_best_accuracy()` | `(history, metric='accuracy')` | Ringkas best/final accuracy, best epoch, dan best loss dari `history` |
+| `load_and_prepare_model()` | `(model_class, model_path, train_loader, [val_loader,] test_loader, device, num_epochs, lr=0.001, patience=10)` | Load model dari checkpoint (jika ada) **atau** training dari awal dengan **best-model tracking** + **early stopping** (MNIST: berbasis `val_loader`; Fashion-MNIST v2: berbasis akurasi `test_loader`), lalu simpan `state_dict` + `history` |
+| `get_best_accuracy()` | `(history, metric='val_accuracy')` | Ringkas best/final accuracy, best epoch, dan best loss dari `history` (v2 memakai `metric='accuracy'`) |
 
 ### A2. Learning Rate Range Test (LRRT)
 
-Digunakan untuk mencari **kandidat learning rate** sebelum training model, sehingga nilai `lr` tidak lagi ditebak. Tersedia di `Quantization_Fashion_MNIST_v2.ipynb`.
+Digunakan untuk mencari **kandidat learning rate** sebelum training model, sehingga nilai `lr` tidak lagi ditebak. Tersedia di **dua notebook**:
+
+| Notebook | Model yang diuji LRRT |
+|---|---|
+| `Quantization_MNIST.ipynb` | `LeNet5` dan `ResNet18Modified` (section diberi judul "ResNet-18") |
+| `Quantization_Fashion_MNIST_v2.ipynb` | `LeNet5` dan `ResNet18Modified` |
 
 | Fungsi | Signature | Tanggung Jawab |
 |---|---|---|
@@ -91,33 +103,40 @@ lrrt_results = run_lr_range_test(model_class=LeNet5, train_loader=train_loader_l
 best_lr, steepest_lr = plot_lr_range_test(lrrt_results)
 
 # kandidat LR dipakai saat training model sebenarnya
+# Fashion-MNIST v2
 model_fp32, history = load_and_prepare_model(LeNet5, model_path, train_loader,
-                                             test_loader, device, num_epochs=10, lr=best_lr)
+                                             test_loader, device, num_epochs=100, lr=best_lr)
+# MNIST (signature menyertakan val_loader & patience)
+model_fp32, history = load_and_prepare_model(LeNet5, model_path, train_loader, val_loader,
+                                             test_loader, device, num_epochs=100,
+                                             lr=best_lr, patience=5)
 ```
 
-Di notebook v2, LRRT dijalankan dua kali: untuk **LeNet-5** dan **ResNet-18 Modified**.
+LRRT dijalankan dua kali di tiap notebook — sekali untuk **LeNet-5**, sekali untuk **ResNet-18** (`ResNet18Modified`). Setiap sel LRRT membuat ulang `train_loader_lrrt` sendiri (stratified split 50k data, batch size 128, normalisasi `0.5 / 0.5`), sehingga tidak bergantung pada loader dari sel EDA.
 
 #### Hasil LRRT — Kandidat Learning Rate
 
 Kurva LRRT untuk kedua arsitektur menghasilkan kandidat LR berikut, yang kemudian dipakai sebagai `lr` pada `load_and_prepare_model()`:
 
-| Arsitektur | Kandidat learning rate |
-|---|---|
-| **LeNet-5** | `0.001`, `0.005`, `0.01` |
-| **ResNet-18** | `0.0001`, `0.0005`, `0.001`, `0.005`, `0.01` |
+| Arsitektur | Kandidat learning rate | Dicoba pada training |
+|---|---|---|
+| **LeNet-5** | `0.001`, `0.005`, `0.01` | MNIST: `0.001`, `0.005` · Fashion-MNIST v2: `0.0001`, `0.001`, `0.005` |
+| **ResNet-18 / Modified** | `0.0001`, `0.0005`, `0.001`, `0.005`, `0.01` | MNIST: `0.0001` (ResNet-18) & kelima nilai (Modified) · Fashion-MNIST v2: kelima nilai (Modified) |
 
 Dari daftar tersebut, beberapa nilai dicoba sebagai variasi training (mis. `lr=0.001` vs `0.005` vs `0.01`) untuk melihat pengaruhnya terhadap akurasi baseline FP32 sebelum model dikuantisasi. Nilai `best_lr`/`steepest_lr` dari plot LRRT dipakai sebagai acuan awal pemilihan kandidat tersebut — bukan dipakai mentah-mentah, karena kandidat dibulatkan ke nilai "bulat" yang umum dipakai.
 
 ```python
-# LeNet-5 — kandidat dari LRRT
+# LeNet-5 — kandidat dari LRRT (MNIST)
 for lr in [0.001, 0.005, 0.01]:
-    model_fp32, history = load_and_prepare_model(LeNet5, model_path, train_loader,
-                                                 test_loader, device, num_epochs=10, lr=lr)
+    model_fp32, history = load_and_prepare_model(
+        LeNet5, model_path, train_loader, val_loader, test_loader, device,
+        num_epochs=100, lr=lr, patience=5)
 
-# ResNet-18 — kandidat dari LRRT
+# ResNet-18 — kandidat dari LRRT (MNIST)
 for lr in [0.0001, 0.0005, 0.001, 0.005, 0.01]:
-    model_fp32, history = load_and_prepare_model(ResNet18, model_path, train_loader,
-                                                 test_loader, device, num_epochs=10, lr=lr)
+    model_fp32, history = load_and_prepare_model(
+        ResNet18Modified, model_path, train_loader, val_loader, test_loader, device,
+        num_epochs=100, lr=lr, patience=5)
 ```
 
 ### B. Kuantisasi
@@ -144,9 +163,9 @@ for lr in [0.0001, 0.0005, 0.001, 0.005, 0.01]:
 
 | Kelas | Notebook | Keterangan |
 |---|---|---|
-| `LeNet5` | Keduanya | 2 layer Conv + 3 layer FC |
-| `ResNet18` | Keduanya | ResNet-18 dengan `conv1` diubah ke 1 channel |
-| `ResNet18Modified` | Fashion-MNIST | Varian `conv1` 3×3 stride 1 + `maxpool` diganti `Identity`, cocok untuk citra 28×28 |
+| `LeNet5` | Semua notebook | 2 layer Conv + 3 layer FC |
+| `ResNet18` | Semua notebook | ResNet-18 dengan `conv1` diubah ke 1 channel |
+| `ResNet18Modified` | Semua notebook | Varian `conv1` 3×3 stride 1 + `maxpool` diganti `Identity`, cocok untuk citra 28×28 |
 
 ---
 
@@ -181,7 +200,7 @@ fgq_results = apply_fgq_to_model(model_fp32, group_size={4, 8, 16}, asymmetric=T
 best_gs, best_model, best_acc = find_best_fgq_model(fgq_results, test_loader, device)
 ```
 
-Dalam eksperimen, **FGQ dijalankan dengan `asymmetric=True`** pada kedua notebook.
+Dalam eksperimen, **FGQ dijalankan dengan `asymmetric=True`** pada semua notebook (beberapa sel juga menjalankan varian `asymmetric=False` sebagai pembanding).
 
 ---
 
@@ -200,18 +219,21 @@ Notebook Fashion-MNIST menambahkan sel debug: `debug_layer_pack_unpack`, `test_p
 
 ---
 
-## 🆚 Perbedaan Kedua Notebook
+## 🆚 Perbedaan Antar Notebook
 
-| Aspek | `Quantization_MNIST.ipynb` | `Quantization_Fashion_MNIST.ipynb` |
+Tabel berikut membandingkan `Quantization_MNIST.ipynb` dengan notebook Fashion-MNIST. Kolom kanan berlaku untuk `Quantization_Fashion_MNIST.ipynb` maupun `Quantization_Fashion_MNIST_v2.ipynb`; perbedaan di antara keduanya dicatat di dalam sel.
+
+| Aspek | `Quantization_MNIST.ipynb` | Notebook Fashion-MNIST |
 |---|---|---|
 | **Dataset** | MNIST | Fashion-MNIST |
-| **Arsitektur** | LeNet-5, ResNet-18 | LeNet-5, ResNet-18, **ResNet-18 Modified** |
-| **Group size FGQ** | `{4, 8, 16}` | ResNet-18 `{4, 8, 16, 32}`, LeNet-5 `{2, 3, 4, 8, 16, 32, 64}` |
+| **Arsitektur** | LeNet-5, ResNet-18, **ResNet-18 Modified** | LeNet-5, ResNet-18, **ResNet-18 Modified** |
+| **Group size FGQ** | `{4, 8, 16}` | `{4, 8, 16}` |
 | **Sel debug pack/unpack** | — | Ada (verifikasi reversibilitas packing, cek alpha, cek mask, simpan tanpa packing) |
 | **Ekspor TorchScript (`.pt`)** | — | Ada (`torch.jit.trace` / `torch.jit.script`) |
 | **Inferensi C++ (LibTorch)** | — | Ada (download LibTorch 2.4.0, build `cmake`, jalankan `./build/inference`) |
-| **Normalisasi input** | `0.1307 / 0.3081` (standar MNIST) | `0.2860 / 0.3530` (standar Fashion-MNIST); sebagian eksperimen LeNet-5 memakai `0.5 / 0.5` |
-| **Learning Rate Range Test** | — | Ada di `Quantization_Fashion_MNIST_v2.ipynb` (LeNet-5 & ResNet-18 Modified) untuk memilih kandidat LR sebelum training |
+| **Normalisasi input** | `0.5 / 0.5` untuk train/val/test dan LRRT; `0.1307 / 0.3081` hanya pada preprocessing inferensi | `0.5 / 0.5` untuk train/test dan LRRT; `0.2860 / 0.3530` pada preprocessing inferensi |
+| **Learning Rate Range Test** | Ada (`## Learning Rate Range Test` → LeNet-5 & ResNet-18) | Ada di `Quantization_Fashion_MNIST_v2.ipynb` (LeNet-5 & ResNet-18 Modified); tidak ada di `Quantization_Fashion_MNIST.ipynb` |
+| **Validation set & early stopping** | Ada `val_loader` (10k) + early stopping `patience=5` berbasis `val_accuracy`; `history` berisi `loss`, `val_accuracy`, `test_accuracy` | `Quantization_Fashion_MNIST.ipynb`: tanpa val set & tanpa early stopping (`num_epochs=10`). `Quantization_Fashion_MNIST_v2.ipynb`: early stopping `patience=10` berbasis akurasi `test_loader` (tanpa val set terpisah); `history` berisi `loss`, `accuracy` |
 
 ### Perbedaan dengan Skema Lama (Monolitik)
 
@@ -258,7 +280,7 @@ Setelah menjalankan notebook, hasil perbandingan akurasi tampil untuk **tiap ars
 | Standard Ternary (asymmetric) | ~X% | ~X% |
 | FGQ (asymmetric, group size terbaik) | ~X% | ~X% |
 
-> **Catatan:** Angka aktual bergantung pada riwayat training model di session tersebut. FGQ dijalankan dengan `asymmetric=True`. Pada `Quantization_Fashion_MNIST_v2.ipynb`, LR training ditentukan dari **Learning Rate Range Test** terlebih dahulu.
+> **Catatan:** Angka aktual bergantung pada riwayat training model di session tersebut. FGQ dijalankan dengan `asymmetric=True`. Pada `Quantization_MNIST.ipynb` dan `Quantization_Fashion_MNIST_v2.ipynb`, LR training ditentukan lebih dulu dari **Learning Rate Range Test**.
 
 ---
 
@@ -266,10 +288,12 @@ Setelah menjalankan notebook, hasil perbandingan akurasi tampil untuk **tiap ars
 
 ```python
 # 1. Setup environment (pilih sesuai notebook / dataset)
-model_path, train_loader, test_loader = setup_mnist_environment('lenet5_mnist_baseline.pth')
-# atau: model_path, ... = setup_fashion_mnist_environment('lenet5_fashion_baseline.pth')
+#    MNIST → 4 nilai (train/val/test)
+model_path, train_loader, val_loader, test_loader = setup_mnist_environment('lenet5_mnist_baseline.pth')
+#    Fashion-MNIST → 3 nilai (train/test)
+# model_path, train_loader, test_loader = setup_fashion_mnist_environment('lenet5_fashion_baseline.pth')
 
-# 1b. (Opsional, notebook v2) Learning Rate Range Test — cari kandidat LR dulu
+# 1b. (Opsional, notebook MNIST & Fashion-MNIST v2) Learning Rate Range Test
 lrrt_results = run_lr_range_test(LeNet5, train_loader_lrrt, device,
                                  start_lr=1e-6, end_lr=1.0, num_iter=300)
 best_lr, steepest_lr = plot_lr_range_test(lrrt_results)
@@ -279,8 +303,8 @@ best_lr, steepest_lr = plot_lr_range_test(lrrt_results)
 
 # 2. Load / Train model baseline (dengan best-model tracking, lr kandidat LRRT)
 model_fp32, history = load_and_prepare_model(LeNet5, model_path,
-                                              train_loader, test_loader, device,
-                                              num_epochs=5, lr=0.005)
+                                             train_loader, val_loader, test_loader, device,
+                                             num_epochs=100, lr=0.005, patience=5)
 best_info = get_best_accuracy(history)
 
 # 3. Standard Ternary Quantization (+ simpan)
@@ -312,7 +336,7 @@ print(f"FGQ (GS={best_gs}): {best_acc:.2f}%")
 Modular Pipeline/
 ├── Quantization_Fashion_MNIST.ipynb   # Notebook modular — Fashion-MNIST (+ debug, TorchScript, C++)
 ├── Quantization_Fashion_MNIST_v2.ipynb # Versi Fashion-MNIST + Learning Rate Range Test
-├── Quantization_MNIST.ipynb           # Notebook modular — MNIST
+├── Quantization_MNIST.ipynb           # Notebook modular — MNIST (+ Learning Rate Range Test)
 └── readme.md                          # File ini
 ```
 
