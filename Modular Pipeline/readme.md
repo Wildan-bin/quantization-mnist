@@ -2,14 +2,17 @@
 
 ## 📌 Gambaran Umum
 
-Folder ini berisi **dua notebook modular** yang menerapkan pendekatan modular untuk eksperimen kuantisasi model *ternary* — **Standard Ternary** dan **Fine-Grained Ternary Quantization (FGQ)**, masing-masing dengan varian **symmetric** maupun **asymmetric threshold** — pada dua dataset:
+Folder ini berisi **tiga notebook modular** yang menerapkan pendekatan modular untuk eksperimen kuantisasi model *ternary* — **Standard Ternary** dan **Fine-Grained Ternary Quantization (FGQ)**, masing-masing dengan varian **symmetric** maupun **asymmetric threshold** — pada dua dataset:
 
 | Notebook | Dataset | Arsitektur | Section tambahan |
 |---|---|---|---|
 | `Quantization_MNIST.ipynb` | **MNIST** | LeNet-5 & ResNet-18 | — |
 | `Quantization_Fashion_MNIST.ipynb` | **Fashion-MNIST** | LeNet-5, ResNet-18 & ResNet-18 Modified | Sel debug pack/unpack, ekspor TorchScript (`.pt`), inferensi C++ (LibTorch) |
+| `Quantization_Fashion_MNIST_v2.ipynb` | **Fashion-MNIST** | LeNet-5, ResNet-18 & ResNet-18 Modified | **Learning Rate Range Test (LRRT)** sebelum training, lalu seluruh alur Fashion-MNIST |
 
 Kedua notebook berbagi **blok fungsi modular yang identik** (setup dataset, training, kuantisasi, penyimpanan). Perbedaannya terletak pada fungsi setup dataset, kelas model, serta section tambahan di notebook Fashion-MNIST.
+
+Sebelum training model, saya menjalankan **Learning Rate Range Test (LRRT)** untuk mendapatkan **kandidat learning rate** yang cocok — alih-alih menebak nilai `lr` secara arbitrer. LRRT dijalankan di `Quantization_Fashion_MNIST_v2.ipynb` (section *PENGUJIAN TRAINING & KUANTISASI → Learning Rate Range Test*) untuk LeNet-5 dan ResNet-18 Modified, dan nilai LR hasilnya dipakai sebagai `lr` pada `load_and_prepare_model()`.
 
 Pipeline ini merupakan hasil refaktorisasi dari skema monolitik sebelumnya — setiap tanggung jawab dipisahkan ke dalam fungsi independen yang dapat digunakan ulang, dan kedua notebook mengikuti **alur tahapan yang konsisten**.
 
@@ -36,6 +39,15 @@ Pipeline ini merupakan hasil refaktorisasi dari skema monolitik sebelumnya — s
 | 4 | **INFERENSI** | Upload gambar + benchmark untuk ResNet-18 Standard, ResNet-18 Fine-Grained, LeNet-5 Standard, LeNet-5 Fine-Grained |
 | 5 | **INFERENSI DENGAN CPP** | Setup LibTorch 2.4.0, build proyek C++ via `cmake`, jalankan inferensi `.pt` dengan binary `./build/inference` |
 
+### `Quantization_Fashion_MNIST_v2.ipynb`
+
+Struktur section sama dengan `Quantization_Fashion_MNIST.ipynb`, dengan satu section tambahan di awal bagian **PENGUJIAN TRAINING & KUANTISASI**:
+
+| # | Section | Isi |
+|---|---|---|
+| 3a | **LEARNING RATE RANGE TEST** | Dataloader khusus LRRT (normalisasi `0.5 / 0.5`), `run_lr_range_test()` + `plot_lr_range_test()` untuk **LeNet-5** dan **ResNet-18 Modified**, menghasilkan kandidat `best_lr` & `steepest_lr` |
+| 3b | **MODEL SETUP** | Training model memakai LR kandidat hasil LRRT (ResNet-18 / Modified / LeNet-5), dilanjutkan kuantisasi & penyimpanan seperti notebook lain |
+
 ---
 
 ## 🧩 Blok Fungsi Modular
@@ -49,6 +61,41 @@ Pipeline ini merupakan hasil refaktorisasi dari skema monolitik sebelumnya — s
 | `evaluate_accuracy()` | `(model, data_loader, device)` | Evaluasi akurasi top-1 pada data loader |
 | `load_and_prepare_model()` | `(model_class, model_path, train_loader, test_loader, device, num_epochs=10, lr=0.001)` | Load model dari checkpoint (jika ada) **atau** training dari awal dengan **best-model tracking**, lalu simpan `state_dict` + `history` |
 | `get_best_accuracy()` | `(history, metric='accuracy')` | Ringkas best/final accuracy, best epoch, dan best loss dari `history` |
+
+### A2. Learning Rate Range Test (LRRT)
+
+Digunakan untuk mencari **kandidat learning rate** sebelum training model, sehingga nilai `lr` tidak lagi ditebak. Tersedia di `Quantization_Fashion_MNIST_v2.ipynb`.
+
+| Fungsi | Signature | Tanggung Jawab |
+|---|---|---|
+| `run_lr_range_test()` | `(model_class, train_loader, device, start_lr=1e-6, end_lr=1.0, num_iter=300, beta=0.98)` | Latih model baru sambil menaikkan LR secara eksponensial dari `start_lr` ke `end_lr` selama `num_iter` iterasi; loss di-*smooth* dengan EMA (`beta`) dan pencatatan berhenti otomatis jika loss `NaN` atau meledak > 4× loss awal. Mengembalikan `{'lr': [...], 'loss': [...]}` |
+| `plot_lr_range_test()` | `(results, skip_start=15, skip_end=10)` | Plot LR (log scale) vs smoothed loss, menandai **`best_lr`** (loss minimum) dan **`steepest_lr`** (gradien paling negatif); mengembalikan `(best_lr, steepest_lr)` |
+
+Cara kerja singkat:
+
+1. Model baru dibuat dari `model_class` (bukan dari checkpoint) — LRRT harus dimulai dari inisialisasi bersih.
+2. Dataloader terpisah dipakai (`train_loader_lrrt`, batch size 128, normalisasi `0.5 / 0.5`) dengan stratified split 50k data.
+3. Setiap iterasi: forward → hitung loss → *smooth* → `backward` → `step` → LR dikali `lr_multiplier = (end_lr / start_lr) ** (1 / num_iter)`.
+4. Dari kurva yang dihasilkan, `best_lr` (titik loss terendah) atau `steepest_lr` dipilih sebagai kandidat LR untuk training sebenarnya.
+
+Kandidat LR yang dihasilkan:
+
+| Kandidat | Cara memperoleh | Kegunaan |
+|---|---|---|
+| `best_lr` | LR pada smoothed loss **minimum** | LR paling aman/optimal untuk training penuh |
+| `steepest_lr` | LR pada **gradien loss paling negatif** (penurunan tercepat) | LR agresif untuk konvergensi lebih cepat |
+
+```python
+lrrt_results = run_lr_range_test(model_class=LeNet5, train_loader=train_loader_lrrt,
+                                 device=device, start_lr=1e-6, end_lr=1.0, num_iter=300)
+best_lr, steepest_lr = plot_lr_range_test(lrrt_results)
+
+# kandidat LR dipakai saat training model sebenarnya
+model_fp32, history = load_and_prepare_model(LeNet5, model_path, train_loader,
+                                             test_loader, device, num_epochs=10, lr=best_lr)
+```
+
+Di notebook v2, LRRT dijalankan dua kali: untuk **LeNet-5** dan **ResNet-18 Modified**.
 
 ### B. Kuantisasi
 
@@ -141,6 +188,7 @@ Notebook Fashion-MNIST menambahkan sel debug: `debug_layer_pack_unpack`, `test_p
 | **Ekspor TorchScript (`.pt`)** | — | Ada (`torch.jit.trace` / `torch.jit.script`) |
 | **Inferensi C++ (LibTorch)** | — | Ada (download LibTorch 2.4.0, build `cmake`, jalankan `./build/inference`) |
 | **Normalisasi input** | `0.1307 / 0.3081` (standar MNIST) | `0.2860 / 0.3530` (standar Fashion-MNIST); sebagian eksperimen LeNet-5 memakai `0.5 / 0.5` |
+| **Learning Rate Range Test** | — | Ada di `Quantization_Fashion_MNIST_v2.ipynb` (LeNet-5 & ResNet-18 Modified) untuk memilih kandidat LR sebelum training |
 
 ### Perbedaan dengan Skema Lama (Monolitik)
 
@@ -187,7 +235,7 @@ Setelah menjalankan notebook, hasil perbandingan akurasi tampil untuk **tiap ars
 | Standard Ternary (asymmetric) | ~X% | ~X% |
 | FGQ (asymmetric, group size terbaik) | ~X% | ~X% |
 
-> **Catatan:** Angka aktual bergantung pada riwayat training model di session tersebut. FGQ dijalankan dengan `asymmetric=True`.
+> **Catatan:** Angka aktual bergantung pada riwayat training model di session tersebut. FGQ dijalankan dengan `asymmetric=True`. Pada `Quantization_Fashion_MNIST_v2.ipynb`, LR training ditentukan dari **Learning Rate Range Test** terlebih dahulu.
 
 ---
 
@@ -198,10 +246,15 @@ Setelah menjalankan notebook, hasil perbandingan akurasi tampil untuk **tiap ars
 model_path, train_loader, test_loader = setup_mnist_environment('lenet5_mnist_baseline.pth')
 # atau: model_path, ... = setup_fashion_mnist_environment('lenet5_fashion_baseline.pth')
 
-# 2. Load / Train model baseline (dengan best-model tracking)
+# 1b. (Opsional, notebook v2) Learning Rate Range Test — cari kandidat LR dulu
+lrrt_results = run_lr_range_test(LeNet5, train_loader_lrrt, device,
+                                 start_lr=1e-6, end_lr=1.0, num_iter=300)
+best_lr, steepest_lr = plot_lr_range_test(lrrt_results)
+
+# 2. Load / Train model baseline (dengan best-model tracking, lr dari LRRT)
 model_fp32, history = load_and_prepare_model(LeNet5, model_path,
                                               train_loader, test_loader, device,
-                                              num_epochs=5)
+                                              num_epochs=5, lr=best_lr)
 best_info = get_best_accuracy(history)
 
 # 3. Standard Ternary Quantization (+ simpan)
@@ -232,6 +285,7 @@ print(f"FGQ (GS={best_gs}): {best_acc:.2f}%")
 ```
 Modular Pipeline/
 ├── Quantization_Fashion_MNIST.ipynb   # Notebook modular — Fashion-MNIST (+ debug, TorchScript, C++)
+├── Quantization_Fashion_MNIST_v2.ipynb # Versi Fashion-MNIST + Learning Rate Range Test
 ├── Quantization_MNIST.ipynb           # Notebook modular — MNIST
 └── readme.md                          # File ini
 ```
